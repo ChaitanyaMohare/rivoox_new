@@ -1,114 +1,166 @@
-import React, { useState } from 'react';
-import { Edit, AlertTriangle, Plus, X } from 'lucide-react';
-import { useAppContext } from './AuthWrapper';
+import React, { useState, useEffect, useCallback } from 'react';
+import { AlertTriangle, Plus, Link as LinkIcon, SkipForward } from 'lucide-react';
 import './DefaulterPlug.css';
 
+const API_BASE = 'http://localhost:3000';
+
 const DefaulterPlug = () => {
-  const { subjects } = useAppContext();
-  const [workContent, setWorkContent] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState('');
-  const [defaulterWorks, setDefaulterWorks] = useState([
-    {
-      id: 1,
-      subject: 'Design and Analysis of Algorithm',
-      title: '4 Previous Year Question Papers',
-      content: 'Solve the previous year question papers and submit the solutions.',
-      isEnabled: true
-    }
-  ]);
+  const [subjects, setSubjects] = useState({ theory: [], practical: [] });
+  const [selectedSubjectId, setSelectedSubjectId] = useState('');
+  const [instructionText, setInstructionText] = useState('');
+  const [referenceLink, setReferenceLink] = useState('');
+  const [skip, setSkip] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [showSnackbar, setShowSnackbar] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
-  const [editingWork, setEditingWork] = useState(null);
+  const [snackbarType, setSnackbarType] = useState('success');
+  const [defaulterSubmissions, setDefaulterSubmissions] = useState([]);
 
-  const showMessage = (message) => {
+  const showMessage = useCallback((message, type = 'success') => {
     setSnackbarMessage(message);
+    setSnackbarType(type);
     setShowSnackbar(true);
-    setTimeout(() => setShowSnackbar(false), 3000);
-  };
+    setTimeout(() => setShowSnackbar(false), 4000);
+  }, []);
 
-  const addDefaulterWork = () => {
-    if (workContent.trim() && selectedSubject) {
-      const newWork = {
-        id: Date.now(),
-        subject: selectedSubject,
-        title: `Work ${defaulterWorks.length + 1}`,
-        content: workContent,
-        isEnabled: true
+  // Fetch subjects from backend
+  const fetchSubjects = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/class-teacher/subjects`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        setSubjects({
+          theory: data.subjects.theory || [],
+          practical: data.subjects.practical || []
+        });
+      } else {
+        showMessage('Error fetching subjects', 'error');
+      }
+    } catch (error) {
+      console.error('Error fetching subjects:', error);
+      showMessage('Error fetching subjects', 'error');
+    }
+  }, [showMessage]);
+
+  // Fetch defaulter submissions (optional - to show existing assignments)
+  const fetchDefaulterSubmissions = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      // Note: You may need to create a GET endpoint for this
+      // For now, we'll skip this and just show the assignment form
+    } catch (error) {
+      console.error('Error fetching defaulter submissions:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSubjects();
+    fetchDefaulterSubmissions();
+  }, [fetchSubjects, fetchDefaulterSubmissions]);
+
+  const handleAssignWork = async () => {
+    // Validation
+    if (!selectedSubjectId) {
+      showMessage('Please select a subject', 'error');
+      return;
+    }
+
+    if (!skip && !instructionText.trim()) {
+      showMessage('Please enter instruction text or enable skip option', 'error');
+      return;
+    }
+
+    if (!skip && referenceLink && !isValidUrl(referenceLink)) {
+      showMessage('Please enter a valid URL for reference link', 'error');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem('token');
+      
+      const payload = {
+        subject_id: selectedSubjectId,
+        instruction_text: instructionText.trim(),
+        reference_link: referenceLink.trim() || null,
+        skip: skip
       };
-      setDefaulterWorks(prev => [...prev, newWork]);
-      setWorkContent('');
-      setSelectedSubject('');
-      showMessage('Defaulter work added successfully!');
-    } else {
-      showMessage('Please select a subject and enter work content.');
+
+      const response = await fetch(`${API_BASE}/api/defaulter/assign-defaulter-work`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to assign defaulter work');
+      }
+
+      if (data.success) {
+        // Check if there are no defaulter students (this is informational, not an error)
+        if (data.message && data.message.includes('No defaulter students')) {
+          showMessage(data.message, 'success');
+          // Don't reset form in this case, let user try with a different subject
+          return;
+        }
+
+        showMessage(
+          data.message || (
+            skip 
+              ? `Marked as skipped. ${data.total_assigned || 0} defaulter students updated.`
+              : `Defaulter work assigned successfully to ${data.total_assigned || 0} students.`
+          ),
+          'success'
+        );
+        
+        // Reset form only if assignment was successful
+        setSelectedSubjectId('');
+        setInstructionText('');
+        setReferenceLink('');
+        setSkip(false);
+        
+        // Refresh submissions if needed
+        fetchDefaulterSubmissions();
+      }
+    } catch (error) {
+      console.error('Error assigning defaulter work:', error);
+      showMessage(error.message || 'Failed to assign defaulter work', 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const updateDefaulterWork = (id, updatedWork) => {
-    setDefaulterWorks(prev => prev.map(work => 
-      work.id === id ? { ...work, ...updatedWork } : work
-    ));
-    setEditingWork(null);
-    showMessage('Defaulter work updated successfully!');
+  const isValidUrl = (string) => {
+    try {
+      new URL(string);
+      return true;
+    } catch (_) {
+      return false;
+    }
   };
 
-  const deleteDefaulterWork = (id) => {
-    setDefaulterWorks(prev => prev.filter(work => work.id !== id));
-    showMessage('Defaulter work deleted successfully!');
+  const handleSkipToggle = () => {
+    setSkip(!skip);
+    if (!skip) {
+      // When enabling skip, clear instruction text
+      setInstructionText('');
+    }
   };
 
-  const toggleWorkStatus = (id) => {
-    setDefaulterWorks(prev => prev.map(work => 
-      work.id === id ? { ...work, isEnabled: !work.isEnabled } : work
-    ));
-    showMessage('Work status updated successfully!');
-  };
-
-  const EditWorkModal = ({ work, onSave, onClose }) => {
-    const [editContent, setEditContent] = useState(work.content);
-    const [editTitle, setEditTitle] = useState(work.title);
-
-    const handleSave = () => {
-      onSave(work.id, { title: editTitle, content: editContent });
-    };
-
-    return (
-      <div className="modal-overlay">
-        <div className="modal-content">
-          <div className="modal-header">
-            <h3>Edit Defaulter Work</h3>
-            <button className="close-btn" onClick={onClose}>
-              <X size={20} />
-            </button>
-          </div>
-          <div className="modal-body">
-            <div className="form-group">
-              <label>Title</label>
-              <input
-                type="text"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                className="form-input"
-              />
-            </div>
-            <div className="form-group">
-              <label>Content</label>
-              <textarea
-                value={editContent}
-                onChange={(e) => setEditContent(e.target.value)}
-                className="work-textarea"
-                rows="6"
-              />
-            </div>
-            <div className="modal-actions">
-              <button className="cancel-btn" onClick={onClose}>Cancel</button>
-              <button className="save-btn" onClick={handleSave}>Save Changes</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  // Get all subjects as a flat array for selection
+  const allSubjects = [
+    ...subjects.theory.map(s => ({ ...s, type: 'theory', displayName: `${s.name} (Theory)` })),
+    ...subjects.practical.map(s => ({ ...s, type: 'practical', displayName: `${s.name} (Practical)` }))
+  ];
 
   return (
     <div className="defaulter-plug">
@@ -117,109 +169,127 @@ const DefaulterPlug = () => {
       {/* Add New Work Section */}
       <div className="add-work-section">
         <div className="section-header">
-          <Plus size={20} />
-          <span>Add New Defaulter Work</span>
+          <AlertTriangle size={20} />
+          <span>Assign Defaulter Work</span>
         </div>
         
         <div className="add-work-form">
-          <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="subject-select">Select Subject *</label>
             <select
-              value={selectedSubject}
-              onChange={(e) => setSelectedSubject(e.target.value)}
+              id="subject-select"
+              value={selectedSubjectId}
+              onChange={(e) => setSelectedSubjectId(e.target.value)}
               className="subject-select"
+              disabled={isLoading}
             >
               <option value="">Select Subject</option>
-              {subjects.theory.map(subject => (
-                <option key={subject.id} value={subject.name}>
-                  {subject.name}
-                </option>
-              ))}
-              {subjects.practical.map(subject => (
-                <option key={`practical-${subject.id}`} value={`${subject.name} (Practical)`}>
-                  {subject.name} (Practical)
+              {allSubjects.map(subject => (
+                <option key={subject.id} value={subject.id}>
+                  {subject.displayName} - {subject.code}
                 </option>
               ))}
             </select>
+            {allSubjects.length === 0 && (
+              <p className="helper-text">No subjects available. Please add subjects first.</p>
+            )}
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="skip-toggle" className="checkbox-label">
+              <input
+                type="checkbox"
+                id="skip-toggle"
+                checked={skip}
+                onChange={handleSkipToggle}
+                disabled={isLoading}
+                className="skip-checkbox"
+              />
+              <SkipForward size={16} />
+              <span>Skip Defaulter Work for this Subject</span>
+            </label>
+            <p className="helper-text">
+              {skip 
+                ? 'When enabled, defaulter students will not receive work for this subject.'
+                : 'Enable this to skip assigning work to defaulter students for this subject.'}
+            </p>
           </div>
           
-          <textarea
-            placeholder="Write defaulter work description here..."
-            value={workContent}
-            onChange={(e) => setWorkContent(e.target.value)}
-            className="work-textarea"
-            rows="4"
-          />
+          {!skip && (
+            <>
+              <div className="form-group">
+                <label htmlFor="instruction-text">Instruction Text *</label>
+                <textarea
+                  id="instruction-text"
+                  placeholder="Enter the defaulter work instructions (e.g., 'Solve 2 previous year question papers')"
+                  value={instructionText}
+                  onChange={(e) => setInstructionText(e.target.value)}
+                  className="work-textarea"
+                  rows="4"
+                  disabled={isLoading}
+                />
+                <p className="helper-text">Describe the work that defaulter students need to complete.</p>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="reference-link">
+                  <LinkIcon size={16} />
+                  Reference Link (Optional)
+                </label>
+                <input
+                  id="reference-link"
+                  type="url"
+                  placeholder="https://drive.google.com/assignment-link"
+                  value={referenceLink}
+                  onChange={(e) => setReferenceLink(e.target.value)}
+                  className="form-input"
+                  disabled={isLoading}
+                />
+                <p className="helper-text">Provide a link to reference materials, assignments, or resources.</p>
+              </div>
+            </>
+          )}
           
-          <button className="add-work-btn" onClick={addDefaulterWork}>
-            <Plus size={16} />
-            Add Defaulter Work
+          <button 
+            className="add-work-btn" 
+            onClick={handleAssignWork}
+            disabled={isLoading || !selectedSubjectId || (!skip && !instructionText.trim())}
+          >
+            {isLoading ? (
+              <>Loading...</>
+            ) : skip ? (
+              <>
+                <SkipForward size={16} />
+                Skip Defaulter Work
+              </>
+            ) : (
+              <>
+                <Plus size={16} />
+                Assign Defaulter Work
+              </>
+            )}
           </button>
         </div>
       </div>
 
-      {/* Existing Works */}
-      <div className="existing-works">
-        <h3>Existing Defaulter Works</h3>
-        
-        {defaulterWorks.map(work => (
-          <div key={work.id} className="defaulter-work-section">
-            <div className="work-header">
-              <h4>{work.subject}</h4>
-              <div className="work-status">
-                <button 
-                  className={`status-toggle ${work.isEnabled ? 'enabled' : 'disabled'}`}
-                  onClick={() => toggleWorkStatus(work.id)}
-                >
-                  {work.isEnabled ? 'Enabled' : 'Disabled'}
-                </button>
-              </div>
-            </div>
-            
-            <div className="work-form">
-              <div className="form-header">
-                <span>{work.title}</span>
-                <div className="form-actions">
-                  <button 
-                    className="edit-btn"
-                    onClick={() => setEditingWork(work)}
-                  >
-                    <Edit size={14} />
-                    Edit
-                  </button>
-                  <button 
-                    className="delete-btn"
-                    onClick={() => deleteDefaulterWork(work.id)}
-                  >
-                    <X size={14} />
-                    Delete
-                  </button>
-                </div>
-              </div>
-              
-              <div className="work-content-display">
-                <p>{work.content}</p>
-              </div>
-            </div>
+      {/* Info Section */}
+      <div className="info-section">
+        <div className="info-card">
+          <AlertTriangle size={20} />
+          <div>
+            <h4>How it works</h4>
+            <ul>
+              <li>Select a subject and enter work instructions for defaulter students</li>
+              <li>All students with attendance below 75% will receive this work</li>
+              <li>You can provide a reference link for additional resources</li>
+              <li>Use the skip option to exclude a subject from defaulter work assignments</li>
+            </ul>
           </div>
-        ))}
-        
-        {defaulterWorks.length === 0 && (
-          <div className="no-works">
-            <p>No defaulter works created yet. Add one above to get started.</p>
-          </div>
-        )}
+        </div>
       </div>
 
-      {editingWork && (
-        <EditWorkModal
-          work={editingWork}
-          onSave={updateDefaulterWork}
-          onClose={() => setEditingWork(null)}
-        />
-      )}
-
       {showSnackbar && (
-        <div className="snackbar success">
+        <div className={`snackbar ${snackbarType}`}>
           {snackbarMessage}
         </div>
       )}

@@ -586,6 +586,22 @@ dditional styles for enhanced functionality */
   font-size: 12px;
 }
 
+.faculty-batches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.faculty-batch-item {
+  color: #5f6368;
+  font-size: 11px;
+  padding: 3px 8px;
+  background-color: #f5f5f5;
+  border-radius: 4px;
+  display: inline-block;
+}
+
 /* Search Section */
 .search-section {
   margin-bottom: 20px;

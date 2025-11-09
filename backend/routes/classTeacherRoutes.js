@@ -202,12 +202,158 @@ router.delete("/student/:id", authenticateUser, authorizeRoles("class_teacher"),
   }
 );
 
+// Get subjects for the class teacher's class
+router.get("/subjects", authenticateUser, authorizeRoles("class_teacher"), async (req, res) => {
+  try {
+    const classId = req.user.class_id;
+    if (!classId) {
+      return res.status(400).json({ success: false, error: "Missing class_id in token" });
+    }
+
+    // Fetch subjects
+    const { data: subjects, error: subjectsError } = await supabase
+      .from("subjects")
+      .select(`
+        id,
+        subject_code,
+        name,
+        type,
+        department_id,
+        class_id,
+        created_at
+      `)
+      .eq("class_id", classId)
+      .order("created_at", { ascending: false });
+
+    if (subjectsError) throw subjectsError;
+
+    if (!subjects || subjects.length === 0) {
+      return res.json({
+        success: true,
+        subjects: {
+          theory: [],
+          practical: [],
+        },
+      });
+    }
+
+    // Fetch faculty_subjects
+    const { data: facultySubjects, error: facultySubjectsError } = await supabase
+      .from("faculty_subjects")
+      .select("id, faculty_id, subject_id, batch_id, class_id")
+      .eq("class_id", classId);
+
+    if (facultySubjectsError) throw facultySubjectsError;
+
+    // Get all unique faculty IDs and batch IDs
+    const facultyIds = [...new Set(facultySubjects.map((fs) => fs.faculty_id).filter(Boolean))];
+    const batchIds = [...new Set(facultySubjects.map((fs) => fs.batch_id).filter(Boolean))];
+
+    // Fetch faculty names
+    const { data: faculties, error: facultiesError } = await supabase
+      .from("users")
+      .select("id, name")
+      .in("id", facultyIds);
+
+    if (facultiesError) throw facultiesError;
+
+    // Fetch batch names
+    const { data: batches, error: batchesError } = await supabase
+      .from("batches")
+      .select("id, name")
+      .in("id", batchIds);
+
+    if (batchesError) throw batchesError;
+
+    // Create lookup maps
+    const facultyMap = new Map(faculties?.map((f) => [f.id, f.name]) || []);
+    const batchMap = new Map(batches?.map((b) => [b.id, b.name]) || []);
+
+    // Group subjects by type and attach faculty information
+    const theorySubjects = [];
+    const practicalSubjects = [];
+
+    subjects.forEach((subject) => {
+      const assignments = facultySubjects.filter((fs) => fs.subject_id === subject.id);
+
+      if (subject.type === "theory") {
+        // Theory subjects have one faculty assignment
+        const assignment = assignments[0];
+        theorySubjects.push({
+          id: subject.id,
+          code: subject.subject_code,
+          name: subject.name,
+          faculty: assignment ? (facultyMap.get(assignment.faculty_id) || "Not assigned") : "Not assigned",
+          faculty_id: assignment?.faculty_id || null,
+        });
+      } else if (subject.type === "practical") {
+        // Practical subjects can have multiple batch assignments
+        const batchFaculties = {};
+        assignments.forEach((assignment) => {
+          if (assignment.batch_id) {
+            const batchName = batchMap.get(assignment.batch_id);
+            if (batchName) {
+              batchFaculties[batchName] = facultyMap.get(assignment.faculty_id) || "Not assigned";
+            }
+          }
+        });
+
+        practicalSubjects.push({
+          id: subject.id,
+          code: subject.subject_code,
+          name: subject.name,
+          faculties: batchFaculties,
+          assignments: assignments.map((a) => ({
+            batch_id: a.batch_id,
+            batch_name: a.batch_id ? batchMap.get(a.batch_id) : null,
+            faculty_id: a.faculty_id,
+            faculty_name: a.faculty_id ? facultyMap.get(a.faculty_id) : "Not assigned",
+          })),
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      subjects: {
+        theory: theorySubjects,
+        practical: practicalSubjects,
+      },
+    });
+  } catch (err) {
+    console.error("Error fetching subjects:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"),
   async (req, res) => {
     try {
+      // Get class_id from token
+      const classId = req.user.class_id;
+      if (!classId) {
+        return res.status(400).json({ success: false, error: "Missing class_id in token" });
+      }
+
+      // Get department_id from users table using class teacher's id
+      const classTeacherId = req.user.id;
+      const { data: classTeacher, error: userError } = await supabase
+        .from("users")
+        .select("department_id")
+        .eq("id", classTeacherId)
+        .single();
+
+      if (userError || !classTeacher) {
+        return res.status(400).json({ success: false, error: "Class teacher not found" });
+      }
+
+      const departmentId = classTeacher.department_id;
+      if (!departmentId) {
+        return res.status(400).json({ success: false, error: "Department ID not found for class teacher" });
+      }
+
+      // Get subject details from request body
       const {
-        class_id,
-        department_id,
         subject_code,
         subject_name,
         type, // 'theory' | 'practical'
@@ -215,10 +361,10 @@ router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"
         faculty_assignments, // array for practical: [{batch_id, faculty_id}]
       } = req.body;
 
-      if (!class_id || !department_id || !subject_code || !subject_name || !type) {
+      if (!subject_code || !subject_name || !type) {
         return res
           .status(400)
-          .json({ success: false, error: "Missing required fields." });
+          .json({ success: false, error: "Missing required fields: subject_code, subject_name, type" });
       }
 
       if (type === "theory" && !faculty_id) {
@@ -227,13 +373,14 @@ router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"
           .json({ success: false, error: "Faculty ID required for theory subject." });
       }
 
-      if (type === "practical" && (!faculty_assignments || !Array.isArray(faculty_assignments))) {
+      if (type === "practical" && (!faculty_assignments || !Array.isArray(faculty_assignments) || faculty_assignments.length === 0)) {
         return res.status(400).json({
           success: false,
           error: "faculty_assignments array required for practical subjects.",
         });
       }
 
+      // Create subject
       const { data: subjectData, error: subjectError } = await supabase
         .from("subjects")
         .insert([
@@ -241,8 +388,8 @@ router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"
             name: subject_name,
             subject_code,
             type,
-            department_id,
-            class_id,
+            department_id: departmentId,
+            class_id: classId,
           },
         ])
         .select()
@@ -252,6 +399,7 @@ router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"
 
       const subject_id = subjectData.id;
 
+      // Create faculty assignments
       let insertData = [];
 
       if (type === "theory") {
@@ -259,7 +407,7 @@ router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"
           faculty_id,
           subject_id,
           batch_id: null,
-          class_id,
+          class_id: classId,
         });
       } else if (type === "practical") {
         for (const fa of faculty_assignments) {
@@ -274,7 +422,7 @@ router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"
             faculty_id: fa.faculty_id,
             subject_id,
             batch_id: fa.batch_id,
-            class_id,
+            class_id: classId,
           });
         }
       }
@@ -304,6 +452,56 @@ router.post("/subjects/assign", authenticateUser, authorizeRoles("class_teacher"
     }
   }
 );
+
+// Delete subject
+router.delete("/subjects/:id", authenticateUser, authorizeRoles("class_teacher"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const classId = req.user.class_id;
+
+    if (!classId) {
+      return res.status(400).json({ success: false, error: "Missing class_id in token" });
+    }
+
+    // Verify subject belongs to this class
+    const { data: subject, error: subjectError } = await supabase
+      .from("subjects")
+      .select("id, class_id")
+      .eq("id", id)
+      .single();
+
+    if (subjectError || !subject) {
+      return res.status(404).json({ success: false, error: "Subject not found" });
+    }
+
+    if (subject.class_id !== classId) {
+      return res.status(403).json({ success: false, error: "Unauthorized to delete this subject" });
+    }
+
+    // Delete faculty_subjects first (cascade or manual)
+    const { error: deleteFacultySubjectsError } = await supabase
+      .from("faculty_subjects")
+      .delete()
+      .eq("subject_id", id);
+
+    if (deleteFacultySubjectsError) {
+      console.error("Error deleting faculty_subjects:", deleteFacultySubjectsError);
+    }
+
+    // Delete subject
+    const { error: deleteError } = await supabase
+      .from("subjects")
+      .delete()
+      .eq("id", id);
+
+    if (deleteError) throw deleteError;
+
+    res.status(200).json({ success: true, message: "Subject deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting subject:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 router.post("/create-batch", authenticateUser, authorizeRoles("class_teacher", "hod"), async (req, res) => {
   try {
