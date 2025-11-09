@@ -635,6 +635,7 @@ const deleteStudent = async (id) => {
 
       <div className="subjects-section">
         <div className="subjects-grid">
+          {/* Theory Subject Form */}
           <div className="subject-form">
             <div className="form-header">
               <BookOpen size={20} />
@@ -643,25 +644,24 @@ const deleteStudent = async (id) => {
 
             <div className="form-fields">
               <input
-                key="theory-code"
                 type="text"
-                placeholder="Enter subject code"
+                placeholder="Subject Code"
                 value={theoryForm.code}
                 onChange={(e) => setTheoryForm(prev => ({ ...prev, code: e.target.value }))}
+                autoComplete="off"
               />
               <input
-                key="theory-name"
                 type="text"
-                placeholder="Enter subject name"
+                placeholder="Subject Name"
                 value={theoryForm.name}
                 onChange={(e) => setTheoryForm(prev => ({ ...prev, name: e.target.value }))}
+                autoComplete="off"
               />
               <select
-                key="theory-faculty"
                 value={theoryForm.faculty}
                 onChange={(e) => setTheoryForm(prev => ({ ...prev, faculty: e.target.value }))}
               >
-                <option value="">Select faculty</option>
+                <option value="">Select Faculty</option>
                 {availableFaculties.map(faculty => (
                   <option key={faculty.id} value={faculty.id}>
                     {faculty.name}
@@ -692,6 +692,7 @@ const deleteStudent = async (id) => {
             </div>
           </div>
 
+          {/* Practical Subject Form */}
           <div className="subject-form">
             <div className="form-header">
               <BookOpen size={20} />
@@ -700,19 +701,20 @@ const deleteStudent = async (id) => {
 
             <div className="form-fields">
               <input
-                key="practical-code"
                 type="text"
-                placeholder="Enter subject code"
+                placeholder="Subject Code"
                 value={practicalForm.code}
                 onChange={(e) => setPracticalForm(prev => ({ ...prev, code: e.target.value }))}
+                autoComplete="off"
               />
               <input
-                key="practical-name"
                 type="text"
-                placeholder="Enter subject name"
+                placeholder="Subject Name"
                 value={practicalForm.name}
                 onChange={(e) => setPracticalForm(prev => ({ ...prev, name: e.target.value }))}
+                autoComplete="off"
               />
+              
               <div className="faculty-grid">
                 {batches.length === 0 ? (
                   <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
@@ -729,7 +731,7 @@ const deleteStudent = async (id) => {
                           faculties: { ...prev.faculties, [batch.name]: e.target.value }
                         }))}
                       >
-                        <option value="">Select faculty</option>
+                        <option value="">Select Faculty</option>
                         {availableFaculties.map(faculty => (
                           <option key={faculty.id} value={faculty.id}>
                             {faculty.name}
@@ -740,6 +742,7 @@ const deleteStudent = async (id) => {
                   ))
                 )}
               </div>
+              
               <button className="add-subject-btn" onClick={addPracticalSubject}>
                 Add Subject
               </button>
@@ -751,7 +754,9 @@ const deleteStudent = async (id) => {
                   <div className="subject-info">
                     <span className="subject-code">{subject.code}</span>
                     <span className="subject-name">{subject.name}</span>
-                    <span className="faculty-name">Multiple Faculties</span>
+                    <span className="faculty-name">
+                      {Object.keys(subject.faculties).length} Batch(es)
+                    </span>
                   </div>
                   <button
                     className="delete-btn"
@@ -763,7 +768,6 @@ const deleteStudent = async (id) => {
               ))}
             </div>
           </div>
-
         </div>
       </div>
     </div>
